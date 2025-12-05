@@ -447,10 +447,11 @@ class SyncFav : Plugin(){
 	}
 
 	private fun addSyncedEmoji(emoji: Emoji){
-		val id = getEmojiId(emoji)
 		val name = getEmojiName(emoji)
 		val isCustom = emoji is ModelEmojiCustom
-		val idStr = if(isCustom && id > 0) id.toString() else name
+
+		val idStr = if(isCustom) getEmojiId(emoji).toString() 
+			else getUnicodeShortcode(emoji as ModelEmojiUnicode)
 		
 		synchronized(FavStore){
 			if(FavStore.emojis.add(CachedEmoji(idStr, name, isCustom))){
@@ -460,10 +461,9 @@ class SyncFav : Plugin(){
 	}
 
 	private fun removeSyncedEmoji(emoji: Emoji){
-		val id = getEmojiId(emoji)
-		val name = getEmojiName(emoji)
 		val isCustom = emoji is ModelEmojiCustom
-		val idStr = if(isCustom && id > 0) id.toString() else name
+		val idStr = if(isCustom) getEmojiId(emoji).toString() 
+			else getUnicodeShortcode(emoji as ModelEmojiUnicode)
 
 		synchronized(FavStore){
 			if(FavStore.emojis.removeAll{ it.id == idStr }){
@@ -540,10 +540,26 @@ class SyncFav : Plugin(){
 	}
 
 	private fun createUnicodeEmoji(name: String): Emoji?{
-		val json = "{\"name\":\"$name\",\"surrogates\":\"$name\"}"
+		val safeName = name.replace("\"", "\\\"")
+		val json = "{\"names\":[\"$safeName\"],\"surrogates\":\"$safeName\"}"
 		return deserialize(json, ModelEmojiUnicode::class.java)
 	}
-	
+
+	private fun getUnicodeShortcode(emoji: ModelEmojiUnicode): String {
+		try {
+			val names = emoji.names
+			if(names != null && names.isNotEmpty()){
+				return names[0]
+			}
+		}catch(e: Throwable){
+			try {
+				val names = ReflectUtils.getField(emoji, "names") as? List<String>
+				if (names != null && names.isNotEmpty()) return names[0]
+			}catch(e2: Throwable){}
+		}
+		return emoji.surrogates
+	}
+
 	private fun resolveRealEmoji(idStr: String, name: String, custom: Boolean): Emoji?{
 		return try{
 			val emojiStore = StoreStream.getEmojis()
@@ -552,7 +568,14 @@ class SyncFav : Plugin(){
 				if(id > 0) emojiStore.getCustomEmojiInternal(id) else null
 			}else{
 				val map = emojiStore.unicodeEmojiSurrogateMap
-				map[name] ?: map[idStr]
+				var emoji = map[idStr]
+
+				if(emoji == null){
+					emoji = map.values.firstOrNull { 
+						it.names?.contains(idStr) == true || it.names?.contains(name) == true
+					}
+				}
+				emoji
 			}
 		}catch(e: Throwable){ null }
 	}
@@ -578,8 +601,15 @@ class SyncFav : Plugin(){
 			if(id != null){
 				val store = StoreStream.getEmojis()
 				val longId = id.toLongOrNull()
-				if(longId != null && longId > 0) return store.getCustomEmojiInternal(longId)
-				return store.unicodeEmojiSurrogateMap[id]
+
+				if(longId != null && longId > 0){
+					return store.getCustomEmojiInternal(longId)
+				}
+
+				val realUnicode = store.unicodeEmojiSurrogateMap[id]
+				if(realUnicode != null) return realUnicode
+
+				return createUnicodeEmoji(id)
 			}
 			null
 		}catch(e: Throwable){ null }
