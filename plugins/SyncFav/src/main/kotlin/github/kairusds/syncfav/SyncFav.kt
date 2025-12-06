@@ -113,8 +113,7 @@ class SyncFav : Plugin(){
 				if(method != null){
 					updateSubject = method.invoke(null, true)
 				}
-			}catch(e: Throwable){
-			}
+			}catch(e: Throwable){}
 		}
 
 		fun triggerUpdate(){
@@ -126,23 +125,12 @@ class SyncFav : Plugin(){
 			}
 		}
 
-		private const val SETTINGS_PROTO_URL = "https://discord.com/api/v9/users/@me/settings-proto/2"
+		private const val SETTINGS_PROTO_ROUTE = "/users/@me/settings-proto/2"
 		data class ProtoResponse(val settings: String?)
-
-		private fun getToken(): String?{
-			try{
-				val auth = StoreStream.getAuthentication()
-				val authState = ReflectUtils.getField(auth, "authState") ?: return null
-				return ReflectUtils.getField(authState, "token") as? String
-			}catch(e: Throwable){ return null }
-		}
 
 		fun fetchRemote(log: Logger){
 			try{
-				val token = getToken() ?: return
-
-				val response = Http.Request(SETTINGS_PROTO_URL, "GET")
-					.setHeader("Authorization", token)
+				val response = Http.Request.newDiscordRNRequest(SETTINGS_PROTO_ROUTE)
 					.execute()
 					.json(ProtoResponse::class.java)
 
@@ -159,13 +147,11 @@ class SyncFav : Plugin(){
 
 		fun pushRemote(log: Logger){
 			try{
-				val token = getToken() ?: return
 				val newBytes = LightProto.createFavoritesPayload(emojis)
 				val base64Str = Base64.encodeToString(newBytes, Base64.NO_WRAP)
 				val body = ProtoResponse(base64Str)
 
-				Http.Request(SETTINGS_PROTO_URL, "PATCH")
-					.setHeader("Authorization", token)
+				Http.Request.newDiscordRNRequest(SETTINGS_PROTO_ROUTE, "PATCH")
 					.executeWithJson(body)
 
 				log.info("[FavStore] Pushed favorites update (${newBytes.size} bytes)")
