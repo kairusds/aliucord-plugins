@@ -1,10 +1,17 @@
 @file:Suppress("UnstableApiUsage")
 
 import com.aliucord.gradle.AliucordExtension
+import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.LibraryExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidExtension
 import org.jlleitschuh.gradle.ktlint.KtlintExtension
+
+fun Project.android(configuration: BaseExtension.() -> Unit) =
+	extensions.getByName<BaseExtension>("android").configuration()
+
+fun Project.aliucord(configuration: AliucordExtension.() -> Unit) =
+	extensions.getByName<AliucordExtension>("aliucord").configuration()
 
 subprojects {
     apply {
@@ -15,11 +22,15 @@ subprojects {
     }
 
     configure<LibraryExtension> {
-        namespace = "com.github.kairusds"
+        namespace = "github.kairusds"
         compileSdk = 36
 
         defaultConfig {
             minSdk = 21
+        }
+
+        lint {
+            targetSdk = 30
         }
 
         buildFeatures {
@@ -36,6 +47,7 @@ subprojects {
     }
 
     configure<AliucordExtension> {
+        minimumDiscordVersion = 126021
         author("kairusds", 0L, hyperlink = true)
         github("https://github.com/kairusds/aliucord-plugins")
     }
