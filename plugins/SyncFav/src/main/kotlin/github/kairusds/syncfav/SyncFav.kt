@@ -101,6 +101,8 @@ class SyncFav : Plugin(){
 	object FavStore{
 		val emojis = LinkedHashSet<CachedEmoji>()
 		var updateSubject: Any? = null
+		var lastFetchedData: ByteArray? = null
+		var hasFetched = false
 		
 		init{
 			try{
@@ -137,7 +139,9 @@ class SyncFav : Plugin(){
 				if(response.settings != null){
 					val rawProto = Base64.decode(response.settings, Base64.DEFAULT)
 					log.info("[FavStore] Fetched ${rawProto.size} bytes.")
+					lastFetchedData = rawProto
 					parseProto(rawProto, log)
+					hasFetched = true
 					triggerUpdate()
 				}
 			}catch(e: Throwable){
@@ -146,8 +150,12 @@ class SyncFav : Plugin(){
 		}
 
 		fun pushRemote(log: Logger){
+			if(!hasFetched) {
+				log.warn("Push aborted to prevent data loss: initial fetch hasn't completed.")
+				return
+			}
 			try{
-				val newBytes = LightProto.createFavoritesPayload(emojis)
+				val newBytes = LightProto.createFavoritesPayload(lastFetchedData, emojis)
 				val base64Str = Base64.encodeToString(newBytes, Base64.NO_WRAP)
 				val body = ProtoResponse(base64Str)
 
@@ -155,6 +163,7 @@ class SyncFav : Plugin(){
 					.executeWithJson(body)
 
 				log.info("[FavStore] Pushed favorites update (${newBytes.size} bytes)")
+				lastFetchedData = newBytes
 				triggerUpdate()
 			}catch(e: Throwable){
 				log.error("Failed to push favorites", e)
@@ -216,16 +225,52 @@ class SyncFav : Plugin(){
 			return emojiIds
 		}
 
-		fun createFavoritesPayload(emojis: Set<CachedEmoji>): ByteArray{
-			val out = ByteArrayOutputStream()
+		fun createFavoritesPayload(original: ByteArray?, emojis: Set<CachedEmoji>): ByteArray{
+			val rootOut = ByteArrayOutputStream()
+			var innerOriginalBytes = ByteArray(0)
+
+			if(original != null && original.isNotEmpty()){
+				val reader = ProtoReader(original)
+				while(reader.hasRemaining()){
+					val startPos = reader.pos
+					val (tag, type) = reader.readTag()
+					if(tag == 0) break 
+					
+					if(tag == FIELD_FAV_EMOJIS_WRAPPER && type == 2){
+						innerOriginalBytes = reader.readBytes()
+					}else{
+						reader.skipField(type)
+						rootOut.write(original, startPos, reader.pos - startPos)
+					}
+				}
+			}
+
 			val innerOut = ByteArrayOutputStream()
+
+			if(innerOriginalBytes.isNotEmpty()){
+				val innerReader = ProtoReader(innerOriginalBytes)
+				while (innerReader.hasRemaining()){
+					val startPos = innerReader.pos
+					val (tag, type) = innerReader.readTag()
+					if(tag == 0) break
+
+					if(tag == FIELD_EMOJI_ID && type == 2){
+						innerReader.skipField(type) 
+					}else{
+						innerReader.skipField(type)
+						innerOut.write(innerOriginalBytes, startPos, innerReader.pos - startPos)
+					}
+				}
+			}
+
 			for(e in emojis){
 				writeStringField(innerOut, FIELD_EMOJI_ID, e.id)
 			}
-			val innerBytes = innerOut.toByteArray()
-			writeLengthDelimited(out, FIELD_FAV_EMOJIS_WRAPPER, innerBytes)
 
-			return out.toByteArray()
+			val innerBytes = innerOut.toByteArray()
+			writeLengthDelimited(rootOut, FIELD_FAV_EMOJIS_WRAPPER, innerBytes)
+
+			return rootOut.toByteArray()
 		}
 
 		private fun writeStringField(out: ByteArrayOutputStream, field: Int, value: String){
